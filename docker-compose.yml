@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15
+    image: ${POSTGRES_IMAGE:-postgres:15}
     container_name: toolathlon_pg
     environment:
       POSTGRES_DB: toolathlon_gym

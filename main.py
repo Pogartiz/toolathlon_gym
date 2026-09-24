@@ -57,9 +57,12 @@ async def main():
 
     print_color("\n====== Evaluating ======", "yellow")
     eval_res = await TaskEvaluator.evaluate_from_log_file(task_config.log_file)
-    print(f"Pass:    {eval_res.get('pass', False)}")
+    print(f"Pass:    {eval_res.get('pass')}")
+    print(f"Measured:{eval_res.get('measured')}")
     print(f"Details: {eval_res.get('details', 'N/A')}")
-    return 0 if eval_res.get("pass", False) else 1
+    # Exit 0 only on measured pass=true. Measured fail and unmeasured both exit 1;
+    # consumers must read eval_res.json (pass/measured), not the exit code alone.
+    return 0 if eval_res.get("pass") is True else 1
 
 
 if __name__ == "__main__":

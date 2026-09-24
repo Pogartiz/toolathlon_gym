@@ -24,6 +24,14 @@ import errno
 from pathlib import Path
 from typing import Union
 
+# Docker Desktop: prefer IPv4 before any outbound HTTP (OpenRouter / tiktoken / MCP).
+try:
+    from utils.net_ipv4 import install_ipv4_only_getaddrinfo
+
+    install_ipv4_only_getaddrinfo()
+except Exception:
+    pass
+
 
 
 BASIC_TYPES = [int, float, str, bool, None, list, dict, set, tuple]

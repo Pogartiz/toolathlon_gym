@@ -3,6 +3,7 @@ import { CallToolRequestSchema, JSONRPCResponse, ListToolsRequestSchema, Tool } 
 import { JSONSchema7 as IJsonSchema } from 'json-schema'
 import { OpenAPIToMCPConverter } from '../openapi/parser.js'
 import { HttpClient, HttpClientError } from '../client/http-client.js'
+import { PgHttpClient } from '../client/pg-client.js'
 import { OpenAPIV3 } from 'openapi-types'
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { PageAccessController } from '../auth/page-access-control.js'
@@ -43,13 +44,14 @@ export class MCPProxy {
     if (!baseUrl) {
       throw new Error('No base URL found in OpenAPI spec')
     }
-    this.httpClient = new HttpClient(
+    const Client = process.env.TOOLATHLON_PG_BACKEND === '1' ? PgHttpClient : HttpClient
+    this.httpClient = new Client(
       {
         baseUrl,
         headers: this.parseHeadersFromEnv(),
       },
       openApiSpec,
-    )
+    ) as HttpClient
 
     // Initialize page access control if needed
     if ((options.pageIds && options.pageIds.length > 0) || (options.pageUrls && options.pageUrls.length > 0)) {

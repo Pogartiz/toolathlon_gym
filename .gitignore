@@ -9,7 +9,9 @@ node_modules/
 
 # Runtime outputs
 dumps/
+benchmark_logs/
 _test_workspace/
+.tiktoken_cache/
 
 # OS
 .DS_Store

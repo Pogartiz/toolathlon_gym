@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import { PgRestRouter } from './pg-rest-router.js';
 
 export class BaseService {
     protected client: AxiosInstance;
@@ -17,6 +18,11 @@ export class BaseService {
         const baseURL = `${this.siteUrl}/wp-json/wc/v3`;
         
         console.error(`[WooCommerce] Initializing with base URL: ${baseURL}`);
+
+        if (process.env.TOOLATHLON_PG_BACKEND === '1') {
+            this.client = new PgRestRouter() as unknown as AxiosInstance;
+            return;
+        }
 
         this.client = axios.create({
             baseURL,

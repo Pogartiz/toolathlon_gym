@@ -40,30 +40,50 @@ RUN uv venv /opt/venv && uv pip install --python /opt/venv/bin/python \
     "arxiv" \
     "bibtexparser" \
     "canvasapi" \
-    "prompt_toolkit"
+    "prompt_toolkit" \
+    "mcp==1.9.0"
+
 
 ENV PATH="/opt/venv/bin:$PATH"
 ENV VIRTUAL_ENV="/opt/venv"
 
-# Install Playwright browser
-RUN playwright install chromium || true
+# CAMEL token counting pulls tiktoken encodings (o200k for gpt-4o-mini fallback).
+# Bake them into the image so task containers do not hit Azure on every cold start.
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
+RUN mkdir -p /opt/tiktoken_cache \
+    && python -c "import tiktoken; tiktoken.get_encoding('o200k_base'); tiktoken.get_encoding('cl100k_base')" \
+    && test -n "$(ls -A /opt/tiktoken_cache)"
+# Fail the build if encodings still require network.
+RUN --network=none python -c "import tiktoken; assert tiktoken.get_encoding('o200k_base').n_vocab > 0; assert tiktoken.get_encoding('cl100k_base').n_vocab > 0"
 
 # Build Node-based and Python MCP servers from /opt/local_servers
 # (keeps compiled artifacts outside the volume-mounted /workspace)
 COPY local_servers/ /opt/local_servers/
-RUN for dir in \
+RUN set -eu; for dir in \
         /opt/local_servers/Calendar-Autoauth-MCP-Server \
         /opt/local_servers/google-forms-mcp \
-        /opt/local_servers/mcp-google-sheets \
         /opt/local_servers/youtube-mcp-server \
         /opt/local_servers/filesystem \
         /opt/local_servers/HowToCook-mcp \
+        /opt/local_servers/12306-mcp \
+        /opt/local_servers/mcp-canvas-lms \
+        /opt/local_servers/notion-mcp-server \
+        /opt/local_servers/mcp-npx-fetch \
+        /opt/local_servers/playwright-mcp \
+        /opt/local_servers/woocommerce-mcp \
         /opt/local_servers/servers; do \
-    [ -f "$dir/package.json" ] && \
-        echo "=== $dir ===" && cd "$dir" && npm install && (npm run build 2>/dev/null || true) && cd /workspace || true; \
+    test -f "$dir/package.json" && \
+        echo "=== $dir ===" && cd "$dir" && \
+        if [ -f package-lock.json ]; then npm ci; else npm install; fi && \
+        npm run build --if-present && cd /workspace; \
 done
 
-RUN for dir in \
+# Browser binaries are versioned with the Node Playwright package used by the
+# MCP server. Installing through the global Python package downloads a
+# different revision and leaves browser_navigate unusable.
+RUN cd /opt/local_servers/playwright-mcp && npx playwright install chromium
+
+RUN set -eu; for dir in \
         /opt/local_servers/arxiv-mcp-server \
         /opt/local_servers/arxiv-latex-mcp \
         /opt/local_servers/yahoo-finance-mcp \
@@ -75,12 +95,26 @@ RUN for dir in \
         /opt/local_servers/excel-mcp-server \
         /opt/local_servers/pdf-tools-mcp \
         /opt/local_servers/mcp-youtube-transcript \
-        /opt/local_servers/cli-mcp-server; do \
-    [ -f "$dir/pyproject.toml" ] && \
-        echo "=== $dir ===" && cd "$dir" && uv sync || true && cd /workspace || true; \
+        /opt/local_servers/cli-mcp-server \
+        /opt/local_servers/mcp-google-sheets; do \
+    test -f "$dir/pyproject.toml" && \
+        echo "=== $dir ===" && cd "$dir" && uv sync && cd /workspace; \
 done
+
+# The YAML configs below execute these exact files. Fail the image build instead
+# of discovering a silently skipped TypeScript build during a benchmark run.
+RUN test -f /opt/local_servers/mcp-canvas-lms/build/index.js \
+    && test -f /opt/local_servers/12306-mcp/build/index.js \
+    && test -f /opt/local_servers/notion-mcp-server/bin/cli.mjs \
+    && test -f /opt/local_servers/mcp-npx-fetch/dist/index.js \
+    && test -f /opt/local_servers/playwright-mcp/lib/program.js \
+    && test -f /opt/local_servers/woocommerce-mcp/dist/index.js
 
 # Copy project code
 COPY . .
+
+# Optional build-time pin: docker build --build-arg GYM_REVISION=$(git rev-parse HEAD) ...
+ARG GYM_REVISION=unknown
+LABEL org.toolathlon.gym.revision=$GYM_REVISION
 
 CMD ["/bin/bash"]

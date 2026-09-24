@@ -12,5 +12,6 @@ params:
     - "run"
     - "ppt_mcp_server"
   cwd: "${agent_workspace}"
-client_session_timeout_seconds: 10
+# Cold `uv run` often exceeds 10s on first connect (smoke train-yf infra_fail).
+client_session_timeout_seconds: 60
 cache_tools_list: true

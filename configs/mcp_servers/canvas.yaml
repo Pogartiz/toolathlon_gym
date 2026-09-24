@@ -11,10 +11,11 @@ params:
   env:
     CANVAS_API_TOKEN: "placeholder"
     CANVAS_DOMAIN: "localhost:8080"
+    TOOLATHLON_PG_BACKEND: "1"
     # skip self-signed certificate detection, set NODE_TLS_REJECT_UNAUTHORIZED=0
     NODE_TLS_REJECT_UNAUTHORIZED: "0"
     # if you don't need to load custom CA certificates, you can comment out the following line
     # NODE_EXTRA_CA_CERTS: "deployment/canvas/logs/cert.pem"
   cwd: "${agent_workspace}"
-client_session_timeout_seconds: 10
+client_session_timeout_seconds: 60
 cache_tools_list: true

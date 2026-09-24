@@ -5,6 +5,10 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
+from utils.net_ipv4 import install_ipv4_only_getaddrinfo
+
+install_ipv4_only_getaddrinfo()
+
 from camel.agents import ChatAgent
 from camel.messages import BaseMessage
 from camel.toolkits import FunctionTool, MCPToolkit
@@ -15,13 +19,74 @@ from utils.aux_tools.python_interpretor import make_python_execute
 from utils.data_structures.task_config import TaskConfig
 from utils.general.helper import copy_folder_contents, print_color
 from utils.mcp.tool_servers import build_mcp_clients
+from utils.roles.tool_call_args import parse_tool_call_arguments
+
+
+def _install_camel_tool_args_patch() -> None:
+    """Repair malformed tool-call JSON before CAMEL's strict json.loads."""
+    if getattr(ChatAgent, "_toolathlon_tool_args_patched", False):
+        return
+
+    original = ChatAgent._handle_batch_response
+
+    def _handle_batch_response(self, response):  # type: ignore[no-untyped-def]
+        try:
+            choice0 = response.choices[0]
+            message = choice0.message
+            tool_calls = getattr(message, "tool_calls", None) or []
+        except Exception:
+            return original(self, response)
+
+        kept = []
+        for tool_call in tool_calls:
+            function = getattr(tool_call, "function", None)
+            if function is None:
+                kept.append(tool_call)
+                continue
+            raw_args = getattr(function, "arguments", None)
+            try:
+                if isinstance(raw_args, str):
+                    json.loads(raw_args)
+                kept.append(tool_call)
+                continue
+            except Exception:
+                pass
+            try:
+                repaired = parse_tool_call_arguments(raw_args)
+                function.arguments = json.dumps(repaired, ensure_ascii=False)
+                kept.append(tool_call)
+                print_color(
+                    f"[agent] Repaired malformed tool args for {getattr(function, 'name', '?')}",
+                    "yellow",
+                )
+            except Exception as exc:
+                preview = repr(raw_args)[:180]
+                print_color(
+                    f"[agent] Dropping tool call {getattr(function, 'name', '?')}: "
+                    f"bad args ({exc}); preview={preview}",
+                    "yellow",
+                )
+        if tool_calls and not kept:
+            print_color("[agent] All tool calls had unparseable arguments; continuing without tools.", "yellow")
+        try:
+            message.tool_calls = kept or None
+        except Exception:
+            pass
+        return original(self, response)
+
+    ChatAgent._handle_batch_response = _handle_batch_response  # type: ignore[method-assign]
+    ChatAgent._toolathlon_tool_args_patched = True
+
+
+_install_camel_tool_args_patch()
 
 
 class TaskStatus(Enum):
     SUCCESS = "success"
-    FAILED = "failed"
-    MAX_TURNS_REACHED = "max_turns_reached"
-    INTERRUPTED = "interrupted"
+    FAILED = "failed"  # model ended without claim_done — measured fail
+    MAX_TURNS_REACHED = "max_turns_reached"  # measured fail
+    INTERRUPTED = "interrupted"  # unmeasured infra
+    ERROR = "error"  # unmeasured infra / exception
 
 
 async def _noop(*args, **kwargs) -> str:
@@ -96,7 +161,12 @@ def _strip_strict_mode(schema: dict):
         _strip_strict_mode(schema["items"])
 
 
-def _sanitize_tool_schemas(tools, max_output_chars: int = 8000, strict_openai: bool = False):
+def _sanitize_tool_schemas(
+    tools,
+    max_output_chars: int = 8000,
+    strict_openai: bool = False,
+    tool_timeout_s: float = 60.0,
+):
     """Patch openai_tool_schema in-place for all FunctionTools.
     Also wraps each tool's function to truncate long outputs."""
     for tool in tools:
@@ -135,8 +205,14 @@ def _sanitize_tool_schemas(tools, max_output_chars: int = 8000, strict_openai: b
 
             # Preserve async_call so ChatAgent can use the native async path
             if original_async_call is not None:
-                async def _async_truncating_wrapper(*args, _afn=original_async_call, _max=max_output_chars, **kwargs):
-                    result = await _afn(*args, **kwargs)
+                async def _async_truncating_wrapper(
+                    *args,
+                    _afn=original_async_call,
+                    _max=max_output_chars,
+                    _timeout=tool_timeout_s,
+                    **kwargs,
+                ):
+                    result = await asyncio.wait_for(_afn(*args, **kwargs), timeout=_timeout)
                     result_str = str(result)
                     if len(result_str) > _max:
                         result_str = result_str[:_max] + f"\n...[truncated, total {len(result_str)} chars]"
@@ -183,7 +259,8 @@ class TaskAgent:
                 print_color("[preprocess] running...", "yellow")
                 r = subprocess.run(cmd, shell=True, capture_output=not self.debug, text=True)
                 if r.returncode != 0:
-                    print_color(f"[preprocess] failed: {(r.stderr or '')[:300]}", "red")
+                    detail = (r.stderr or r.stdout or "")[:300]
+                    raise RuntimeError(f"preprocess failed (rc={r.returncode}): {detail}")
                 else:
                     print_color("[preprocess] done.", "green")
 
@@ -292,6 +369,9 @@ class TaskAgent:
             # Format: MCP_HTTP_URLS=name1=http://host:port/mcp,name2=http://...
             http_mcp_urls = None
             http_mcp_timeout = float(os.environ.get("MCP_HTTP_TIMEOUT", "600"))
+            mcp_connect_timeout = float(os.environ.get("MCP_STDIO_TIMEOUT", "60"))
+            step_timeout = float(os.environ.get("AGENT_STEP_TIMEOUT", "180"))
+            tool_execution_timeout = float(os.environ.get("TOOL_EXECUTION_TIMEOUT", "60"))
             _raw_urls = os.environ.get("MCP_HTTP_URLS", "")
             if _raw_urls:
                 http_mcp_urls = {}
@@ -305,12 +385,23 @@ class TaskAgent:
                 http_mcp_urls=http_mcp_urls,
                 http_mcp_timeout=http_mcp_timeout,
             )
-            toolkit = MCPToolkit(clients=mcp_clients, timeout=http_mcp_timeout)
+            toolkit = MCPToolkit(
+                clients=mcp_clients,
+                timeout=http_mcp_timeout,
+                skip_failed=False,
+                per_client_timeout=mcp_connect_timeout,
+                # CAMEL counts total attempts here (0 means "never try").
+                max_retries=1,
+            )
             await toolkit.connect()
 
             mcp_tools = toolkit.get_tools()
             strict_openai = os.environ.get("MODEL_PLATFORM", "").lower() == "openai"
-            _sanitize_tool_schemas(mcp_tools, strict_openai=strict_openai)
+            _sanitize_tool_schemas(
+                mcp_tools,
+                strict_openai=strict_openai,
+                tool_timeout_s=tool_execution_timeout,
+            )
             local_tools = self._build_local_tools(workspace)
             all_tools = mcp_tools + local_tools
             # OpenAI API enforces a 128-tool limit; trim only for official OpenAI platform
@@ -337,14 +428,20 @@ class TaskAgent:
                 sys_msg = self.task_config.system_prompts.agent
                 # Fix tool name mismatch: original Toolathlon uses "local-" prefix
                 sys_msg = sys_msg.replace("local-claim_done", "claim_done")
+                sys_msg = sys_msg.replace(
+                    "you can either call the `claim_done` tool or respond without calling any tool to indicate completion.",
+                    "you must call the `claim_done` tool to indicate completion. "
+                    "A normal response without a tool call does not indicate completion.",
+                )
 
+            # Bound hangs: OpenRouter/DNS stalls previously burned the full 1200s CAMEL default.
             agent = ChatAgent(
                 system_message=sys_msg,
                 model=self.model,
                 tools=all_tools,
                 max_iteration=self.max_steps,
-                step_timeout=1200,
-                tool_execution_timeout=120,
+                step_timeout=step_timeout,
+                tool_execution_timeout=tool_execution_timeout,
                 summarize_threshold=None,  # disable context summarization — stop on token limit
                 retry_attempts=999,  # effectively infinite retry on rate limit
                 retry_delay=5.0,     # start at 5s, exponential backoff up to 60s
@@ -371,6 +468,7 @@ class TaskAgent:
         except KeyboardInterrupt:
             status = TaskStatus.INTERRUPTED
         except Exception as e:
+            status = TaskStatus.ERROR
             print_color(f"[agent] Error: {e}", "red")
             if self.debug:
                 traceback.print_exc()

@@ -97,8 +97,8 @@ def build_mcp_clients(
             env=full_env,
             cwd=cwd,
         )
-        timeout = cfg.get("client_session_timeout_seconds", 60)
-        clients.append(MCPClient(config=server_config, timeout=float(timeout)))
+        timeout = float(cfg.get("client_session_timeout_seconds", 60))
+        clients.append(MCPClient(config=server_config, timeout=timeout))
 
     found = {cfg.get("name", f.stem) for f in config_path.glob("*.yaml")
              for cfg in [yaml.safe_load(open(f))] if cfg}

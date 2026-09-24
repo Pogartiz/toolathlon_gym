@@ -1,6 +1,7 @@
 """python_execute local tool for CAMEL."""
+import asyncio
 import os
-import subprocess
+import sys
 import time
 import uuid
 
@@ -16,9 +17,11 @@ def make_python_execute(agent_workspace: str):
             filename: Optional filename (with .py). A random UUID name is used if omitted.
             timeout: Max execution time in seconds (capped at 120).
         """
-        timeout = min(int(timeout), 120)
+        timeout = max(1, min(int(timeout), 120))
         if not filename:
             filename = f"{uuid.uuid4()}.py"
+        if filename != os.path.basename(filename) or filename in {".", ".."}:
+            raise ValueError("filename must be a plain file name without a path")
         if not filename.endswith(".py"):
             filename += ".py"
 
@@ -30,25 +33,33 @@ def make_python_execute(agent_workspace: str):
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(code)
 
-        cmd = f"uv run --directory {workspace} ./.python_tmp/{filename}"
+        python_bin = os.environ.get("PYTHON_BIN", sys.executable)
         start = time.time()
+        process = await asyncio.create_subprocess_exec(
+            python_bin,
+            file_path,
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         try:
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True,
-                text=True, encoding="utf-8", timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except TimeoutError:
+            process.kill()
+            await process.communicate()
             return f"=== TIMEOUT ===\nExceeded {timeout}s limit."
 
         elapsed = time.time() - start
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
         parts = []
-        if result.stdout:
-            parts += ["=== STDOUT ===", result.stdout.rstrip()]
-        if result.stderr:
-            parts += ["=== STDERR ===", result.stderr.rstrip()]
+        if stdout:
+            parts += ["=== STDOUT ===", stdout.rstrip()]
+        if stderr:
+            parts += ["=== STDERR ===", stderr.rstrip()]
         parts += [
             "=== INFO ===",
-            f"Return code: {result.returncode}",
+            f"Return code: {process.returncode}",
             f"Time: {elapsed:.2f}s / {timeout}s limit",
         ]
         return "\n".join(parts) if parts else "No output."

@@ -1,6 +1,7 @@
 // src/client.ts
 
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import { PgCanvasRouter } from './pg-canvas-router.js';
 import { 
   CanvasCourse, 
   CanvasAssignment,
@@ -56,6 +57,11 @@ export class CanvasClient {
     this.baseURL = `https://${domain}/api/v1`;
     this.maxRetries = options?.maxRetries ?? 3;
     this.retryDelay = options?.retryDelay ?? 1000;
+
+    if (process.env.TOOLATHLON_PG_BACKEND === '1') {
+      this.client = new PgCanvasRouter() as unknown as AxiosInstance;
+      return;
+    }
 
     this.client = axios.create({
       baseURL: this.baseURL,

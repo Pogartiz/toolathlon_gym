@@ -90,6 +90,9 @@ Concurrency is controlled by a FIFO-based semaphore — the first argument sets 
 | `MODEL_API_KEY` | — | API key for other providers |
 | `MODEL_PLATFORM` | — | Platform override (e.g. `openai_compatible`) |
 | `MODEL_API_URL` | — | Base URL for OpenAI-compatible endpoints |
+| `MODEL_TIMEOUT` | `180` | Per-request LLM HTTP timeout (seconds) |
+| `MODEL_MAX_RETRIES` | `0` | OpenAI-SDK retries on timeout/transport errors (0 = fail-fast) |
+| `TIKTOKEN_CACHE_DIR` | `/opt/tiktoken_cache` | Offline tiktoken encodings (baked in image; host `.tiktoken_cache/` mounted when present) |
 
 ---
 

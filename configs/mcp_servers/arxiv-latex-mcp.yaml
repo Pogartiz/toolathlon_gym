@@ -13,5 +13,6 @@ params:
     - "python"
     - "server/main.py"
   # cwd: "${agent_workspace}" # do not add this for compatibility
-client_session_timeout_seconds: 10
+# Cold `uv run` often exceeds 10s on first connect.
+client_session_timeout_seconds: 60
 cache_tools_list: true 

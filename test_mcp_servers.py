@@ -83,7 +83,7 @@ SMOKE_CALLS = {
     "yahoo-finance":        ("get_stock_info",        {"symbol": "AAPL"}),
     "youtube":              ("search_videos",         {"query": "test", "max_results": 1}),
     "youtube_transcript":   ("get_transcript",        {"video_id": "dQw4w9WgXcQ"}),
-    "rail_12306":           ("query_stations",        {}),
+    "rail_12306":           ("get-station-code-by-names", {"stationNames": "北京南"}),
 }
 
 # ── JSON-RPC helpers ──────────────────────────────────────────────────────────

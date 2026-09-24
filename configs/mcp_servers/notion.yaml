@@ -13,6 +13,7 @@ params:
     - ""
   env:
     OPENAPI_MCP_HEADERS: "{\"Authorization\": \"Bearer ntn-placeholder\", \"Notion-Version\": \"2022-06-28\" }"
+    TOOLATHLON_PG_BACKEND: "1"
   cwd: "${agent_workspace}"
 client_session_timeout_seconds: 100
 cache_tools_list: true

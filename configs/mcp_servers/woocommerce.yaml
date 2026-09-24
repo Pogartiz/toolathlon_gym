@@ -12,6 +12,7 @@ params:
     WORDPRESS_SITE_URL: "http://localhost:8081"
     WOOCOMMERCE_CONSUMER_KEY: "placeholder"
     WOOCOMMERCE_CONSUMER_SECRET: "placeholder"
+    TOOLATHLON_PG_BACKEND: "1"
   cwd: "${agent_workspace}"
-client_session_timeout_seconds: 10
+client_session_timeout_seconds: 60
 cache_tools_list: true
