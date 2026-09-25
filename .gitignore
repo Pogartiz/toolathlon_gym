@@ -12,6 +12,15 @@ dumps/
 benchmark_logs/
 _test_workspace/
 .tiktoken_cache/
+results/
+
+# Task mock/runtime logs (rewritten on every harness run)
+**/tmp/**/server.log
+**/tmp/**/*.log
+tasks/finalpool/**/tmp/**/server.log
+
+# macOS AppleDouble junk under task trees
+**/._*
 
 # OS
 .DS_Store
